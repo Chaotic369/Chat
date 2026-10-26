@@ -5377,10 +5377,6 @@ document.getElementById("clear").onclick = () => {
                                                                     var b=d.getElementById(video?"callBtn":"voiceCallBtn");
                                                                     if(!b)return;
                                                                     b.click();
-                                                                    setTimeout(function(){
-                                                                      var y=d.getElementById("callConfirmYes");
-                                                                      if(y)y.click();
-                                                                    },60);
                                                                   }
                                                                   msgs.addEventListener("click",function(e){
                                                                     var bt=e.target.closest?e.target.closest(".cl-btn"):null;
