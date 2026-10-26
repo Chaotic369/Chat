@@ -2444,8 +2444,18 @@ function openContextMenu(msgId, sender, x, y) {
   
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
-    let top = y - rect.height - 20;
-    if (top < 20) top = y + 20; // Flip below if off-screen top
+        const capsule = menu.querySelector('.ig-reaction-capsule');
+        const capH = capsule ? capsule.getBoundingClientRect().height : 0;
+        menu.style.flexDirection = "";
+        // Reactions sit right above the finger, actions go below
+        let top = y - capH - 20;
+        if (top + rect.height > window.innerHeight - 10) {
+          // Not enough room below: stack the actions above the reactions instead
+          menu.style.flexDirection = "column-reverse";
+          top = y - rect.height - 20;
+        }
+        if (top < 10) top = 10;
+        if (top + rect.height > window.innerHeight - 10) top = Math.max(10, window.innerHeight - rect.height - 10);
     
     let left = x - (rect.width / 2);
     if (left < 10) left = 10;
