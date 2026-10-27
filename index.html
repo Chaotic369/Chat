@@ -513,12 +513,12 @@ textarea::placeholder{color:var(--text);opacity:.4}
 .call-overlay.show{display:flex}
 #remoteVideo{width:100%;height:100%;object-fit:cover;background:#000}
 .call-overlay.voice-only #remoteVideo{opacity:0}
-.call-overlay.voice-only #localCallVideo{display:none}
+.call-overlay.local-off #localCallVideo{display:none}
 .call-overlay.voice-only{background:radial-gradient(ellipse at 50% 30%,#1c1c1c 0%,#000 75%)}
 .call-overlay.voice-only .call-incoming-info{display:flex}
 .call-overlay.voice-only .call-status{display:none}
 .call-overlay.voice-only .call-incoming-label{font-size:16px;opacity:.7;font-variant-numeric:tabular-nums}
-.call-overlay.voice-only #callFlip{display:none}
+.call-overlay.local-off #callFlip{display:none}
 #localCallVideo{position:absolute;top:calc(env(safe-area-inset-top,0px) + 16px);right:16px;width:96px;height:140px;object-fit:cover;border-radius:14px;border:1px solid var(--border);background:#111;transform:scaleX(-1);z-index:2}
 .call-confirm{position:fixed;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:1600;padding:16px}
 .cp-overlay{position:fixed;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:2100;padding:16px}
@@ -3327,7 +3327,9 @@ let callIncomingOffer = null, callRingTimer = null, callVibeTimer = null, callFa
 let callIncomingVideo = true, callRemoteVideoLive = false, callLocalVideoOn = false;
 let callSharing = false, callScreenTrack = null;
 let callReconnecting = false, callReconnectTries = 0, callReconnectTimer = null, callIsCaller = false, callEverConnected = false, callRemoteVideoSeen = false;
+    callRemoteCamOff = false; callCamSent = null;
 let callOfferSeq = 0, callHandledOfferSeq = 0, callHandledAnswerSeq = 0;
+let callRemoteCamOff = false, callCamSent = null;
 
 const callBtn = document.getElementById("callBtn");
 const voiceCallBtn = document.getElementById("voiceCallBtn");
@@ -3423,8 +3425,12 @@ function applyCallBackdrop() {
 }
 
 function updateCallMode() {
-  const voice = !callLocalVideoOn && !callRemoteVideoLive && !callSharing;
-  callOverlay.classList.toggle("voice-only", voice);
+  const remoteOn = callRemoteVideoLive && !callRemoteCamOff;
+    const localOn = callLocalVideoOn || callSharing;
+    callOverlay.classList.toggle("voice-only", !remoteOn);
+    callOverlay.classList.toggle("local-off", !localOn);
+    if (remoteOn) remoteVideo.play().catch(() => {});
+    if (localOn) localCallVideo.play().catch(() => {});
   if (callPc && callPc.connectionState === "connected") startCallTimer();
   }
 
@@ -3457,7 +3463,12 @@ function syncCallCamUI() {
   callLocalVideoOn = !!callStream && callStream.getVideoTracks().some(t => t.enabled);
   callCam.classList.toggle("off", !callLocalVideoOn);
   callCam.textContent = callLocalVideoOn ? "Camera" : "Cam off";
-  updateCallMode();
+    updateCallMode();
+    const camNow = callLocalVideoOn || callSharing;
+    if (callPc && callEverConnected && camNow !== callCamSent) {
+      callCamSent = camNow;
+      update(callRef(), { ["cam_" + role]: camNow }).catch(() => {});
+    }
 }
 
 function setCallUI(txt, incoming) {
@@ -3494,7 +3505,8 @@ function cleanupCall() {
     callAnswerSet = false;
     callRemoteVideoLive = false;
     callLocalVideoOn = false;
-    callOverlay.classList.remove("voice-only");
+    callOverlay.classList.add("voice-only", "local-off");
+        callRemoteCamOff = false; callCamSent = null;
         stopCallTimer();
   callMute.classList.remove("off"); callMute.textContent = "Mute";
     if (callScreenTrack) { callScreenTrack.onended = null; callScreenTrack.stop(); callScreenTrack = null; }
@@ -3628,6 +3640,10 @@ function initCall() {
   onValue(callRef(), (snap) => {
     const c = snap.val();
         handleCallRenegotiation(c);
+            if (c && callPc) {
+              const camOff = c["cam_" + (role === "hunter" ? "prey" : "hunter")] === false;
+              if (camOff !== callRemoteCamOff) { callRemoteCamOff = camOff; updateCallMode(); }
+            }
     if (!c) {
       if (callPc || callIncomingOffer) cleanupCall();
       return;
@@ -3706,7 +3722,7 @@ callAccept.onclick = async () => {
                         }
                         if (!callStream.getVideoTracks().length) {
                           pc.getTransceivers().forEach(t => {
-                            if (t.receiver.track && t.receiver.track.kind === "video") t.direction = "recvonly";
+                            if (t.receiver.track && t.receiver.track.kind === "video") t.direction = "sendrecv";
                           });
                         }
                     flushCallCands(pc);
@@ -3781,7 +3797,7 @@ async function startScreenShare() {
     localCallVideo.srcObject = new MediaStream([st]);
     localCallVideo.style.transform = "none";
     setShareUI(true);
-    updateCallMode();
+        syncCallCamUI();
   } catch (e) { console.error(e); }
 }
 
@@ -3812,7 +3828,8 @@ callFlip.onclick = async () => {
     old.stop();
     const ns = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: callFacing } } });
     const nt = ns.getVideoTracks()[0];
-    const sender = callPc.getSenders().find(s => s.track && s.track.kind === "video");
+        nt.enabled = old.enabled;
+        const sender = callPc.getSenders().find(s => s.track && s.track.kind === "video");
     if (sender) await sender.replaceTrack(nt);
     callStream.removeTrack(old);
     callStream.addTrack(nt);
@@ -3824,7 +3841,8 @@ callFlip.onclick = async () => {
 /* CALL RECONNECT */
 function onCallConnected() {
   callEverConnected = true;
-  if (!callReconnecting) { updateCallMode(); return; }
+  callCamSent = null;
+    if (!callReconnecting) { syncCallCamUI(); return; }
   callReconnecting = false;
   callReconnectTries = 0;
   clearTimeout(callReconnectTimer);
